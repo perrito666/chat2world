@@ -12,30 +12,46 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
-	"github.com/perrito666/chat2world/blogging"
-	"github.com/perrito666/chat2world/blogging/mastodon"
 	"github.com/perrito666/chat2world/config"
+	"github.com/perrito666/chat2world/im"
 )
 
 // Bot wraps the underlying bot.Bot and holds state.
 type Bot struct {
-	bot                     *bot.Bot
-	posts                   map[int64]*blogging.MicroblogPost // pending post per chat (by Chat.ID)
-	bloggingPlatforms       map[config.AvailableBloggingPlatform]blogging.Platform
-	authedBloggingPlatforms map[config.AvailableBloggingPlatform]blogging.AuthedPlatform
-	postsMutex              sync.Mutex
-	commands                map[string]bot.HandlerFunc
-	flowSchedulers          map[int64]*FlowScheduler
+	bot                  *bot.Bot
+	postsMutex           sync.Mutex
+	commands             map[string]bot.HandlerFunc
+	flowSchedulers       map[uint64]*im.FlowScheduler
+	flowSchedulerFactory im.SchedulerFactoryFN
 
 	authFlowOngoing map[int64]map[config.AvailableBloggingPlatform]bool
-
-	// done channel communicates when the bot has stopped.
-	done chan struct{}
 }
+
+// SendMessage sends a im.Message to telegram (with all the needed translation)
+func (tb *Bot) SendMessage(ctx context.Context, message *im.Message) error {
+	params := &bot.SendMessageParams{
+		ChatID: message.ChatID,
+		Text:   message.Text,
+	}
+	if message.InReplyTo != 0 {
+		params.ReplyParameters = &models.ReplyParameters{
+			MessageID: int(message.InReplyTo),
+		}
+	}
+	_, err := tb.bot.SendMessage(ctx, params)
+	if err != nil {
+		return fmt.Errorf("telegram send message: %w", err)
+	}
+	return nil
+}
+
+var _ im.Messenger = (*Bot)(nil)
 
 // New creates a new Telegram bot instance.
 // You can pass additional bot.Options if needed.
-func New(ctx context.Context, token string, webhookSecret string, webhookURL *url.URL) (*Bot, error) {
+func New(ctx context.Context,
+	token string, webhookSecret string, webhookURL *url.URL,
+	schedulerFn im.SchedulerFactoryFN) (*Bot, error) {
 	// Create the underlying bot.
 	opt := bot.WithWebhookSecretToken(webhookSecret)
 	b, err := bot.New(token, opt)
@@ -44,10 +60,9 @@ func New(ctx context.Context, token string, webhookSecret string, webhookURL *ur
 	}
 
 	tb := &Bot{
-		bot:            b,
-		posts:          make(map[int64]*blogging.MicroblogPost),
-		done:           make(chan struct{}),
-		flowSchedulers: make(map[int64]*FlowScheduler),
+		bot:                  b,
+		flowSchedulerFactory: schedulerFn,
+		flowSchedulers:       make(map[uint64]*im.FlowScheduler),
 	}
 
 	wasSet, err := tb.bot.SetWebhook(ctx, &bot.SetWebhookParams{
@@ -71,7 +86,6 @@ func New(ctx context.Context, token string, webhookSecret string, webhookURL *ur
 
 // Start runs the bot until the given context is canceled.
 func (tb *Bot) Start(ctx context.Context, addr string) error {
-
 	go func() {
 		log.Printf("telegram http listen on %s", addr)
 		err := http.ListenAndServe(addr, tb.bot.WebhookHandler())
@@ -85,11 +99,8 @@ func (tb *Bot) Start(ctx context.Context, addr string) error {
 	return nil
 }
 
-// Stop stops the bot by canceling its context.
-// (Typically you would cancel the context passed to Start.)
+// Stop is wishful thinking for now.
 func (tb *Bot) Stop() {
-	// In this design, Stop() is a helper if you want to close the underlying bot immediately.
-	close(tb.done) // wait until the bot has finished
 }
 
 // defaultHandler processes any non-command (or unmatched) messages.
@@ -100,24 +111,24 @@ func (tb *Bot) defaultHandler(ctx context.Context, b *bot.Bot, u *models.Update)
 		return
 	}
 
-	chatID := u.Message.Chat.ID
-	var sched = tb.flowSchedulers[chatID]
-
-	if sched == nil {
-		sched = NewScheduler()
-		cm, err := mastodon.NewClient()
-		if err != nil {
-			log.Printf("mastodon new client err: %v", err)
-			return
-		}
-		maf := NewMastodonAuthorizerFlow(cm)
-		sched.registerFlow(maf, "mastodon_auth", []string{"/mastodon_auth"})
-		sched.registerFlow(NewPostingFlow(map[config.AvailableBloggingPlatform]blogging.AuthedPlatform{config.MBPMastodon: cm}),
-			"microblog_post", []string{"/new"})
-		tb.flowSchedulers[chatID] = sched
+	message, err := messageFromTelegramMessage(ctx, b, u)
+	if err != nil {
+		log.Printf("telegram message from telegram message err: %v", err)
+		return
 	}
 
-	err := sched.handleMessage(ctx, b, u)
+	var sched = tb.flowSchedulers[message.UserID]
+
+	if sched == nil {
+		sched, err = tb.flowSchedulerFactory(message.UserID)
+		if err != nil {
+			log.Printf("telegram flow scheduler factory err: %v", err)
+			return
+		}
+		tb.flowSchedulers[message.UserID] = sched
+	}
+
+	err = sched.HandleMessage(ctx, message, tb)
 	if err != nil {
 		log.Printf("telegram handle message err: %v", err)
 		return
