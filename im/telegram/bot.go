@@ -23,6 +23,7 @@ type Bot struct {
 	commands             map[string]bot.HandlerFunc
 	flowSchedulers       map[uint64]*im.FlowScheduler
 	flowSchedulerFactory im.SchedulerFactoryFN
+	allowedUsers         map[uint64]bool
 
 	authFlowOngoing map[int64]map[config.AvailableBloggingPlatform]bool
 }
@@ -50,7 +51,7 @@ var _ im.Messenger = (*Bot)(nil)
 // New creates a new Telegram bot instance.
 // You can pass additional bot.Options if needed.
 func New(ctx context.Context,
-	token string, webhookSecret string, webhookURL *url.URL,
+	token string, webhookSecret string, webhookURL *url.URL, allowedUsers []uint64,
 	schedulerFn im.SchedulerFactoryFN) (*Bot, error) {
 	// Create the underlying bot.
 	opt := bot.WithWebhookSecretToken(webhookSecret)
@@ -59,10 +60,15 @@ func New(ctx context.Context,
 		return nil, err
 	}
 
+	allowedUsersMap := make(map[uint64]bool, len(allowedUsers))
+	for _, u := range allowedUsers {
+		allowedUsersMap[u] = true
+	}
 	tb := &Bot{
 		bot:                  b,
 		flowSchedulerFactory: schedulerFn,
 		flowSchedulers:       make(map[uint64]*im.FlowScheduler),
+		allowedUsers:         allowedUsersMap,
 	}
 
 	wasSet, err := tb.bot.SetWebhook(ctx, &bot.SetWebhookParams{
@@ -106,8 +112,15 @@ func (tb *Bot) Stop() {
 // defaultHandler processes any non-command (or unmatched) messages.
 // If a chat is in "writing mode", the message content is appended to the post.
 func (tb *Bot) defaultHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
-	log.Printf("telegram default handler from chat ID %d: %s", u.Message.Chat.ID, u.Message.Text)
+	log.Printf("telegram default handler from chat ID %d", u.Message.Chat.ID)
 	if u.Message == nil {
+		return
+	}
+	if u.Message.From == nil {
+		return
+	}
+	if !tb.allowedUsers[uint64(u.Message.From.ID)] {
+		log.Printf("telegram default handler: user not allowed: %d", u.Message.From.ID)
 		return
 	}
 

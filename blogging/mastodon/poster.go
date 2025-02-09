@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"log"
 	"net/url"
-	"os"
-	"time"
 
 	"github.com/mattn/go-mastodon"
 
 	"github.com/perrito666/chat2world/blogging" // update the module path accordingly
+	"github.com/perrito666/chat2world/secrets"
 )
 
 // Config holds the configuration for connecting to a Mastodon instance.
@@ -58,6 +57,7 @@ func (c *Config) DumpToPersistableDict() map[string]string {
 
 // Client wraps a Mastodon client and provides a method to post.
 type Client struct {
+	store  *secrets.EncryptedStore
 	client *mastodon.Client
 	config *Config
 	userID blogging.UserID
@@ -75,8 +75,9 @@ func (c *Client) Config(userID blogging.UserID) (blogging.ClientConfig, error) {
 }
 
 // NewClient creates a new Mastodon client using the provided configuration.
-func NewClient() (*Client, error) {
+func NewClient(store *secrets.EncryptedStore) (*Client, error) {
 	return &Client{
+		store:  store,
 		client: mastodon.NewClient(&mastodon.Config{}),
 		config: baseConfig(),
 	}, nil
@@ -111,7 +112,7 @@ func (c *Client) IsAuthorized(id blogging.UserID) bool {
 // loadConfigIfExists loads a config from a file if it exists.
 func (c *Client) loadConfigIfExists(id blogging.UserID) (*Config, error) {
 	cfg := baseConfig()
-	f, err := os.Open(fmt.Sprintf("%d.json", id))
+	f, err := c.store.OpenReader(fmt.Sprintf("%d.json", id))
 	if err != nil {
 		return cfg, nil
 	}
@@ -130,13 +131,6 @@ func (c *Client) authorizeForLoadedConfig(ctx context.Context) error {
 	if c.config == nil || !c.config.loaded {
 		return fmt.Errorf("no config loaded")
 	}
-	/*	app := &mastodon.Application{
-		ID:           c.config.AppID,
-		RedirectURI:  "urn:ietf:wg:oauth:2.0:oob",
-		ClientID:     c.config.ClientID,
-		ClientSecret: c.config.ClientSecret,
-		AuthURI:      "",
-	}*/
 
 	c.client = mastodon.NewClient(&mastodon.Config{
 		Server:       c.config.Server,
@@ -250,7 +244,7 @@ func (c *Client) StartAuthorization(ctx context.Context, id blogging.UserID, cfg
 		mapCfg := cfg.DumpToPersistableDict()
 		// create a file in the running folder named after the year, month, day, hour, minute, second.json
 		// and dump the cfg to it.
-		f, err := os.OpenFile(fmt.Sprintf("%d-%d-%d-%d-%d-%d.json", time.Now().Year(), time.Now().Month(), time.Now().Day(), time.Now().Hour(), time.Now().Minute(), time.Now().Second()), os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := c.store.OpenWriter(fmt.Sprintf("%d.json", c.userID))
 		if err != nil {
 			log.Fatal(err)
 		}

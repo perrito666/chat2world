@@ -22,22 +22,26 @@ const (
 )
 
 type Config struct {
+	EnabledUIDs              map[AvailableIM][]uint64
 	EnabledIMs               []AvailableIM
 	EnabledBloggingPlatforms []AvailableBloggingPlatform
 	AvailableInteractions    map[AvailableIM][]AvailableBloggingPlatform
 	BPAuth                   map[AvailableBloggingPlatform]map[string]string
 	IMAuth                   map[AvailableIM]map[string]string
+	PerUserBloggingConfig    map[uint64]map[AvailableBloggingPlatform]map[string]string
 }
 
 func NewConfig() *Config {
 	return &Config{
+		EnabledUIDs:              map[AvailableIM][]uint64{},
 		EnabledIMs:               []AvailableIM{IMTelegram},
 		EnabledBloggingPlatforms: []AvailableBloggingPlatform{MBPMastodon},
 		AvailableInteractions: map[AvailableIM][]AvailableBloggingPlatform{
 			IMTelegram: {MBPMastodon},
 		},
-		BPAuth: map[AvailableBloggingPlatform]map[string]string{},
-		IMAuth: map[AvailableIM]map[string]string{},
+		BPAuth:                map[AvailableBloggingPlatform]map[string]string{},
+		IMAuth:                map[AvailableIM]map[string]string{},
+		PerUserBloggingConfig: map[uint64]map[AvailableBloggingPlatform]map[string]string{},
 	}
 }
 
