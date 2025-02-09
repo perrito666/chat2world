@@ -2,10 +2,13 @@ package mastodon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/url"
+	"os"
+	"time"
 
 	"github.com/mattn/go-mastodon"
 
@@ -58,8 +61,7 @@ type Client struct {
 }
 
 func (c *Client) Config() blogging.ClientConfig {
-	//TODO implement me
-	panic("implement me")
+	return c.config
 }
 
 var _ blogging.Platform = &ClientManager{}
@@ -70,15 +72,15 @@ type ClientManager struct {
 
 var ErrClientNotFound = errors.New("client not found")
 
-func (cm *ClientManager) Post(ctx context.Context, chatID blogging.ChatID, post *blogging.MicroblogPost) error {
+func (cm *ClientManager) Post(ctx context.Context, chatID blogging.ChatID, post *blogging.MicroblogPost) (string, error) {
 	if client, ok := cm.clients[chatID]; ok {
-		err := client.Post(ctx, post)
+		postURL, err := client.Post(ctx, post)
 		if err != nil {
-			return fmt.Errorf("posting failed: %v", err)
+			return "", fmt.Errorf("posting failed: %v", err)
 		}
-		return nil
+		return postURL, nil
 	}
-	return ErrClientNotFound
+	return "", ErrClientNotFound
 }
 
 func (cm *ClientManager) Config(chatID blogging.ChatID) (blogging.ClientConfig, error) {
@@ -107,15 +109,50 @@ func baseConfig() *Config {
 	}
 }
 
-func (cm *ClientManager) StartAuthorization(id blogging.ChatID, cfg *Config) (chan string, error) {
+func (cm *ClientManager) IsAuthorized(id blogging.ChatID) bool {
+	_, ok := cm.clients[id]
+	return ok
+}
+
+func (cm *ClientManager) StartAuthorization(ctx context.Context, id blogging.ChatID, cfgGeneric map[string]string) (chan string, error) {
+	// FIXME: Use ctx done to bail if the user takes too long.
 	commsChan := make(chan string)
+	var cfg *Config
+	if cfgGeneric == nil {
+		cfgGeneric = make(map[string]string)
+	}
+	cfg = &Config{}
+	if len(cfgGeneric) == 0 {
+		// load from clientID.json on the running folder
+		f, err := os.Open(fmt.Sprintf("%d.json", id))
+		if err == nil {
+			err = json.NewDecoder(f).Decode(&cfgGeneric)
+			if err != nil {
+				log.Printf("error loading config from file: %v", err)
+			}
+			f.Close()
+		}
+	}
+	err := cfg.LoadFromPersistableDict(cfgGeneric)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.ClientName == "" {
+		cfg.ClientName = ClientName
+	}
+	if cfg.ClientWebsite == "" {
+		cfg.ClientWebsite = ClientWebsite
+	}
 	go func(id blogging.ChatID, cfg *Config, comms chan string) {
+		defer close(comms)
 		if cfg == nil {
 			cfg = baseConfig()
 		}
 		if cfg.Server == "" {
+			log.Printf("No server in config, asking user")
 			comms <- "What is the mastodon instance server URL?"
 			cfg.Server = <-comms
+			log.Printf("Server is %s", cfg.Server)
 		}
 		appConfig := &mastodon.AppConfig{
 			Server:       cfg.Server,
@@ -124,19 +161,20 @@ func (cm *ClientManager) StartAuthorization(id blogging.ChatID, cfg *Config) (ch
 			Website:      cfg.ClientWebsite,
 			RedirectURIs: "urn:ietf:wg:oauth:2.0:oob",
 		}
-		if cfg.ClientID == "" || cfg.ClientSecret == "" {
-			app, err := mastodon.RegisterApp(context.Background(), appConfig)
-			if err != nil {
-				log.Fatal(err)
-			}
-			cfg.ClientID = app.ClientID
-			cfg.ClientSecret = app.ClientSecret
-			u, err := url.Parse(app.AuthURI)
-			if err != nil {
-				log.Fatal(err)
-			}
-			cfg.AuthURL = u
+		var reauth = cfg.ClientID == "" || cfg.ClientSecret == ""
+
+		app, err := mastodon.RegisterApp(context.Background(), appConfig)
+		if err != nil {
+			log.Fatal(err)
 		}
+		cfg.ClientID = app.ClientID
+		cfg.ClientSecret = app.ClientSecret
+		u, err := url.Parse(app.AuthURI)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.AuthURL = u
+
 		if cfg.AccessToken == "" {
 			comms <- fmt.Sprintf("Open your browser to \n%s\n and copy/paste the given token\n", cfg.AuthURL)
 			cfg.AccessToken = <-comms
@@ -150,15 +188,33 @@ func (cm *ClientManager) StartAuthorization(id blogging.ChatID, cfg *Config) (ch
 		})
 		// Token will be at c.Config.AccessToken
 		// and will need to be persisted.
-		// Otherwise you'll need to register and authenticate token again.
-		err := mc.AuthenticateToken(context.Background(), cfg.AccessToken, "urn:ietf:wg:oauth:2.0:oob")
-		if err != nil {
-			log.Fatal(fmt.Errorf("authenticating client: %w", err))
+		// Otherwise, you'll need to register and authenticate token again.
+		if reauth {
+			err := mc.AuthenticateToken(context.Background(), cfg.AccessToken, "urn:ietf:wg:oauth:2.0:oob")
+			if err != nil {
+				log.Fatal(fmt.Errorf("authenticating client: %w", err))
+			}
+			cfg.AccessToken = mc.Config.AccessToken
 		}
 
 		cm.clients[id] = &Client{
 			client: mc,
 			config: cfg,
+		}
+		if !reauth {
+			return
+		}
+		mapCfg := cfg.DumpToPersistableDict()
+		// create a file in the running folder named after the year, month, day, hour, minute, second.json
+		// and dump the cfg to it.
+		f, err := os.OpenFile(fmt.Sprintf("%d-%d-%d-%d-%d-%d.json", time.Now().Year(), time.Now().Month(), time.Now().Day(), time.Now().Hour(), time.Now().Minute(), time.Now().Second()), os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		err = json.NewEncoder(f).Encode(mapCfg)
+		if err != nil {
+			log.Fatal(err)
 		}
 	}(id, cfg, commsChan)
 	return commsChan, nil
@@ -166,7 +222,7 @@ func (cm *ClientManager) StartAuthorization(id blogging.ChatID, cfg *Config) (ch
 
 // Post sends a MicroblogPost to Mastodon. It uploads any images (if present)
 // and then creates a new status (toot) with the given text and attachments.
-func (c *Client) Post(ctx context.Context, post *blogging.MicroblogPost) error {
+func (c *Client) Post(ctx context.Context, post *blogging.MicroblogPost) (string, error) {
 	var mediaIDs []mastodon.ID
 
 	// Upload images (if any).
@@ -178,7 +234,7 @@ func (c *Client) Post(ctx context.Context, post *blogging.MicroblogPost) error {
 		})
 		if err != nil {
 			log.Printf("failed to upload image %d: %v", idx, err)
-			return fmt.Errorf("failed to upload image %d: %w", idx, err)
+			return "", fmt.Errorf("failed to upload image %d: %w", idx, err)
 		}
 		mediaIDs = append(mediaIDs, attachment.ID)
 	}
@@ -191,12 +247,12 @@ func (c *Client) Post(ctx context.Context, post *blogging.MicroblogPost) error {
 	}
 
 	// Post the toot.
-	_, err := c.client.PostStatus(ctx, toot)
+	postedToot, err := c.client.PostStatus(ctx, toot)
 	if err != nil {
 		log.Printf("failed to post status: %v", err)
-		return fmt.Errorf("failed to post status: %w", err)
+		return "", fmt.Errorf("failed to post status: %w", err)
 	}
 
 	log.Printf("successfully posted status: %s", post.Text)
-	return nil
+	return postedToot.URL, nil
 }

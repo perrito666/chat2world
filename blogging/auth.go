@@ -2,13 +2,13 @@ package blogging
 
 import "context"
 
-type ChatID string
+type ChatID int64
 
 type Authorizer interface {
 	IsAuthorized(id ChatID) bool
 	// StartAuthorization should begin an authorization chat that is a convo via the chan
 	// the im client is agnostic to it.
-	StartAuthorization(ctx context.Context, id ChatID) (chan string, error)
+	StartAuthorization(ctx context.Context, id ChatID, cfg map[string]string) (chan string, error)
 }
 type Authorization struct {
 	registeredAuthorizationMechanisms map[string]Authorizer

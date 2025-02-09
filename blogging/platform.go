@@ -3,7 +3,7 @@ package blogging
 import "context"
 
 type Platform interface {
-	Post(ctx context.Context, chatID ChatID, post *MicroblogPost) error
+	Post(ctx context.Context, chatID ChatID, post *MicroblogPost) (string, error)
 	Config(chatID ChatID) (ClientConfig, error)
 }
 

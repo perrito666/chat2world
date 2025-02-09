@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/perrito666/chat2world/blogging/mastodon"
 	"github.com/perrito666/chat2world/im/telegram" // update this import path to match your module layout
 )
 
@@ -15,18 +14,6 @@ func main() {
 	// Create a cancelable context that ends when an interrupt is received.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-
-	// Create mastodon client
-
-	mc, err := mastodon.NewClient(&mastodon.Config{
-		Server:        os.Getenv("MASTODON_SERVER"),
-		ClientName:    os.Getenv("MASTODON_CLIENT_NAME"),
-		ClientWebsite: os.Getenv("MASTODON_CLIENT_WEBSITE"),
-		AccessToken:   os.Getenv("MASTODON_ACCESS_TOKEN"),
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	// Create the bot instance.
 	u, err := url.Parse(os.Getenv("CHAT2WORLD_URL"))
