@@ -1,4 +1,4 @@
-package mastodon
+package blogging
 
 import (
 	"context"
@@ -6,14 +6,13 @@ import (
 	"log"
 	"strings"
 
-	"github.com/perrito666/chat2world/blogging"
 	"github.com/perrito666/chat2world/im"
 )
 
 // AuthorizerFlow implements flow for authorizing a blogging account through a telegram bot, instantiate them with
 // the Authorizer you want to use for each platform.
 type AuthorizerFlow struct {
-	authorizer        blogging.Authorizer
+	authorizer        Authorizer
 	authorizationChan chan string
 }
 
@@ -28,7 +27,7 @@ func (a *AuthorizerFlow) StartCommandParser(s string) (string, []string, error) 
 
 // Start implements im.Flow and will start the authorization flow for the chat that sent the message.
 func (a *AuthorizerFlow) Start(ctx context.Context, message *im.Message, messenger im.Messenger) error {
-	authorization, err := a.authorizer.StartAuthorization(ctx, blogging.UserID(message.UserID), nil)
+	authorization, err := a.authorizer.StartAuthorization(ctx, UserID(message.UserID), nil)
 	if err != nil {
 		return fmt.Errorf("starting authorization: %w", err)
 	}
@@ -48,19 +47,19 @@ func (a *AuthorizerFlow) HandleMessage(ctx context.Context, message *im.Message,
 	}
 	// extract the message to be sent through the channel if not a command
 	if !message.IsCommand() && !message.IsEmpty() {
-		log.Printf("telegram authorizer: sending message from chat ID %d for user %d: %s", message.ChatID, message.UserID, message.Text)
+		log.Printf("%s authorizer: sending message from chat ID %d for user %d: %s", messenger.Name(), message.ChatID, message.UserID, message.Text)
 		select {
 		case a.authorizationChan <- message.Text:
 		case <-ctx.Done():
 			return nil
 		}
 	}
-	log.Printf("telegram authorizer: handling message from chat ID %d for user %d: %s", message.ChatID, message.UserID, message.Text)
+	log.Printf("%s authorizer: handling message from chat ID %d for user %d: %s", messenger.Name(), message.ChatID, message.UserID, message.Text)
 
 	select {
 	case msg, ok := <-a.authorizationChan:
 		if !ok {
-			log.Printf("telegram authorizer: finished authorization for chat ID %d for user %d", message.ChatID, message.UserID)
+			log.Printf("%s authorizer: finished authorization for chat ID %d for user %d", messenger.Name(), message.ChatID, message.UserID)
 			return im.ErrFlowFinished
 		}
 		err := messenger.SendMessage(ctx, message.Reply(msg))
@@ -75,8 +74,7 @@ func (a *AuthorizerFlow) HandleMessage(ctx context.Context, message *im.Message,
 
 var _ im.Flow = &AuthorizerFlow{}
 
-// NewMastodonAuthorizerFlow creates a new AuthorizerFlow for Mastodon.
-func NewMastodonAuthorizerFlow(authorizer blogging.Authorizer) *AuthorizerFlow {
+func NewAuthorizerFlow(authorizer Authorizer) *AuthorizerFlow {
 	return &AuthorizerFlow{
 		authorizer: authorizer,
 	}

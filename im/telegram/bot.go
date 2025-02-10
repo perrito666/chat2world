@@ -28,6 +28,10 @@ type Bot struct {
 	authFlowOngoing map[int64]map[config.AvailableBloggingPlatform]bool
 }
 
+func (tb *Bot) Name() string {
+	return "telegram"
+}
+
 // SendMessage sends a im.Message to telegram (with all the needed translation)
 func (tb *Bot) SendMessage(ctx context.Context, message *im.Message) error {
 	params := &bot.SendMessageParams{

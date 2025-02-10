@@ -36,11 +36,15 @@ func (p *PostingFlow) StartCommandParser(s string) (string, []string, error) {
 
 func (p *PostingFlow) HandleMessage(ctx context.Context, message *im.Message, messenger im.Messenger) error {
 	if !message.IsCommand() {
-		p.defaultHandler(ctx, message, messenger)
+		err := p.defaultHandler(ctx, message, messenger)
+		if err != nil {
+			return fmt.Errorf("default handler: %w", err)
+		}
+		return nil
 	}
 	command, _, err := message.AsCommand(p.StartCommandParser)
 	if err != nil {
-		return fmt.Errorf("parsing message: %w", err)
+		return fmt.Errorf("parsing message (%s): %w", message.Text, err)
 	}
 
 	switch command {

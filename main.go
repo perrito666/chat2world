@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 
 	"github.com/perrito666/chat2world/blogging"
+	"github.com/perrito666/chat2world/blogging/bluesky"
 	"github.com/perrito666/chat2world/blogging/mastodon"
 	"github.com/perrito666/chat2world/config"
 	"github.com/perrito666/chat2world/im"
@@ -43,6 +45,42 @@ func (s *strSlice) String() string {
 
 func (s *strSlice) Set(value string) error {
 	*s = append(*s, value)
+	return nil
+}
+
+// onlyDecryptFiles takes a slice of strings representing file paths and a store and opens each file then writes it
+// decrypted to a file with the same name but with the .clear extension.
+func onlyDecryptFiles(files []string, store *secrets.EncryptedStore) error {
+	log.Printf("files: %v", files)
+	for _, f := range files {
+		err := func() error {
+			// Open the file to read.
+			r, err := store.OpenReader(f)
+			if err != nil {
+				return fmt.Errorf("opening file to read: %w", err)
+			}
+			defer r.Close()
+
+			// Open the encrypted file to write.
+			fmt.Printf("f: %s\n", f)
+			w, err := os.OpenFile(f+".clear", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+			if err != nil {
+				return fmt.Errorf("opening encrypted file to write: %w", err)
+			}
+			defer w.Close()
+
+			// Copy the file contents to the encrypted file.
+			var written int64
+			if written, err = io.Copy(w, r); err != nil {
+				return fmt.Errorf("writing to clear file: %w", err)
+			}
+			log.Printf("wrote %d bytes to %s", written, f+".clear")
+			return nil
+		}()
+		if err != nil {
+			return fmt.Errorf("decrypting file %s: %w", f, err)
+		}
+	}
 	return nil
 }
 
@@ -86,8 +124,10 @@ func main() {
 	// Define and parse the allowed Telegram user ID flags.
 	var allowedTelegramUsers uint64Slice
 	var encryptFiles strSlice
+	var decryptFiles strSlice
 	flag.Var(&allowedTelegramUsers, "with-allowed-telegram-user", "Allowed Telegram user ID (can be specified multiple times)")
 	flag.Var(&encryptFiles, "encrypt-file", "File to encrypt")
+	flag.Var(&decryptFiles, "decrypt-file", "File to decrypt")
 	flag.Parse()
 
 	pasword := os.Getenv("CHAT2WORLD_PASSWORD")
@@ -97,6 +137,14 @@ func main() {
 			log.Fatalf("failed to encrypt files: %v", err)
 		}
 		log.Printf("files encrypted")
+		return
+	}
+
+	if len(decryptFiles) > 0 {
+		if err := onlyDecryptFiles(decryptFiles, store); err != nil {
+			log.Fatalf("failed to decrypt files: %v", err)
+		}
+		log.Printf("files decrypted")
 		return
 	}
 
@@ -146,23 +194,40 @@ func main() {
 		func(userID uint64) (*im.FlowScheduler, error) {
 			sched := im.NewScheduler()
 
+			// mastodon
 			cm, err := mastodon.NewClient(store)
 			if err != nil {
 				log.Printf("mastodon new client err: %v", err)
 				return nil, fmt.Errorf("mastodon new client: %w", err)
 			}
-			maf := mastodon.NewMastodonAuthorizerFlow(cm)
+			maf := blogging.NewAuthorizerFlow(cm)
 			if err = sched.RegisterFlow(maf, "mastodon_auth", []string{"/mastodon_auth"}); err != nil {
 				log.Printf("mastodon auth flow err: %v", err)
 				return nil, fmt.Errorf("mastodon auth flow: %w", err)
 			}
 			// done only for effect, this will trigger a load of user config
 			cm.IsAuthorized(blogging.UserID(userID))
-			if err = sched.RegisterFlow(blogging.NewPostingFlow(map[config.AvailableBloggingPlatform]blogging.AuthedPlatform{config.MBPMastodon: cm}),
+
+			// bluesky
+			bskyCM, err := bluesky.NewClient(store)
+			if err != nil {
+				log.Printf("bluesky new client err: %v", err)
+				return nil, fmt.Errorf("bluesky new client: %w", err)
+			}
+			bskyAF := blogging.NewAuthorizerFlow(bskyCM)
+			if err = sched.RegisterFlow(bskyAF, "bluesky_auth", []string{"/bluesky_auth"}); err != nil {
+				log.Printf("bluesky auth flow err: %v", err)
+				return nil, fmt.Errorf("bluesky auth flow: %w", err)
+			}
+			// done only for effect, this will trigger a load of user config
+			bskyCM.IsAuthorized(blogging.UserID(userID))
+
+			if err = sched.RegisterFlow(blogging.NewPostingFlow(map[config.AvailableBloggingPlatform]blogging.AuthedPlatform{config.MBPMastodon: cm, config.MBPBsky: bskyCM}),
 				"microblog_post", []string{"/new"}); err != nil {
 				log.Printf("microblog post flow err: %v", err)
 				return nil, fmt.Errorf("microblog post flow: %w", err)
 			}
+
 			return sched, nil
 		})
 	if err != nil {

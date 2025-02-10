@@ -3,7 +3,6 @@ package mastodon
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -55,6 +54,8 @@ func (c *Config) DumpToPersistableDict() map[string]string {
 	}
 }
 
+var _ blogging.ClientConfig = (*Config)(nil)
+
 // Client wraps a Mastodon client and provides a method to post.
 type Client struct {
 	store  *secrets.EncryptedStore
@@ -65,11 +66,9 @@ type Client struct {
 
 var _ blogging.Platform = &Client{}
 
-var ErrClientNotFound = errors.New("client not found")
-
 func (c *Client) Config(userID blogging.UserID) (blogging.ClientConfig, error) {
 	if c.config == nil {
-		return nil, ErrClientNotFound
+		return nil, blogging.ErrClientNotFound
 	}
 	return c.config, nil
 }
@@ -150,7 +149,8 @@ func (c *Client) StartAuthorization(ctx context.Context, id blogging.UserID, cfg
 	commsChan := make(chan string)
 	var cfg *Config
 	if !c.config.loaded {
-		_, err := c.loadConfigIfExists(id)
+		var err error
+		cfg, err = c.loadConfigIfExists(id)
 		if err != nil {
 			log.Printf("error loading config: %v", err)
 		}

@@ -74,4 +74,5 @@ func (m *Message) AsCommand(parser CommandParser) (string, []string, error) {
 // it was modeled after Telegram's send message, but hopefully we can adapt others..
 type Messenger interface {
 	SendMessage(ctx context.Context, message *Message) error
+	Name() string
 }
