@@ -24,14 +24,21 @@ const (
 	FacetLinkType    ATProtoType = "app.bsky.richtext.facet#link"
 )
 
+// {"blob":{"$type":"blob","ref":{"$link":"bafkreiepxzhesdi2637rtdgmkm4jdsnixpi5bbpp5gz2fq64ebwzrltoau"},"mimeType":"image/jpeg","size":115022}}
+type Ref struct {
+	Link string `json:"$link"`
+}
+
+type OuterBlob struct {
+	Blob ImageUploadResponse `json:"blob"`
+}
+
 // ImageUploadResponse represents the response from an image upload call.
 type ImageUploadResponse struct {
-	Type ATProtoType `json:"$type"`
-	Ref  struct {
-		Link string `json:"$link"`
-	} `json:"ref"`
-	MimeType string `json:"mimeType"`
-	Size     int    `json:"size"`
+	Type     ATProtoType `json:"$type"`
+	Ref      Ref         `json:"ref"`
+	MimeType string      `json:"mimeType"`
+	Size     int         `json:"size"`
 }
 
 // EmbedAspectRatio defines the aspect ratio of an embedded image.
@@ -58,7 +65,7 @@ type PostRecord struct {
 	Type      ATProtoType `json:"$type"`
 	Text      string      `json:"text"`
 	CreatedAt string      `json:"createdAt"`
-	Embed     []PostEmbed `json:"embed"`
+	Embed     PostEmbed   `json:"embed"`
 	Langs     []string    `json:"langs"` //tbd in a decent way
 	Facets    []Facet     `json:"facets"`
 }

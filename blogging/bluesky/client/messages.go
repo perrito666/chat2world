@@ -209,16 +209,17 @@ func (client *Client) UploadImageBlob(imageData []byte, mimeType string) (*Image
 	if err != nil {
 		return nil, fmt.Errorf("failed to read upload blob response: %w", err)
 	}
+	fmt.Printf("upload blob response: %s\n", string(body))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("upload blob returned non-OK status: %s", string(body))
 	}
 
 	// Define a response struct to capture the blob reference.
-	var uploadResp ImageUploadResponse
+	var uploadResp OuterBlob
 	if err := json.Unmarshal(body, &uploadResp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal upload blob response: %w", err)
 	}
-	return &uploadResp, nil
+	return &uploadResp.Blob, nil
 }
 
 /*
@@ -298,7 +299,7 @@ func atURIToHTTPSBsky(atURI string) string {
 // For details on the expected JSON structure, see the Bluesky API reference https://docs.bsky.app/docs/tutorials/creating-a-post
 // It tries to return the URL to the bluesky post.
 func (client *Client) PostToBluesky(text string, images []*PostableImage, lang []string) (string, error) {
-	var embeds []PostEmbed
+	var embeds []EmbedImage
 	if lang == nil {
 		lang = []string{"en"} // not a sane default, my default for this example.
 	}
@@ -307,17 +308,18 @@ func (client *Client) PostToBluesky(text string, images []*PostableImage, lang [
 		if err != nil {
 			return "", fmt.Errorf("failed to upload image: %w", err)
 		}
-		embed := PostEmbed{
-			Type: EmbedImagesType,
-			Images: []EmbedImage{
-				{
-					Alt:   img.AltText,
-					Image: *uploadResp,
-					AspectRatio: EmbedAspectRatio{
-						Width:  img.Width,
-						Height: img.Height,
-					},
-				},
+		embed := EmbedImage{
+
+			Alt: img.AltText,
+			Image: ImageUploadResponse{
+				Type:     BlobType,
+				Ref:      Ref{Link: uploadResp.Ref.Link},
+				MimeType: img.MimeType,
+				Size:     len(img.ImageRaw),
+			},
+			AspectRatio: EmbedAspectRatio{
+				Width:  img.Width,
+				Height: img.Height,
 			},
 		}
 		embeds = append(embeds, embed)
@@ -330,8 +332,13 @@ func (client *Client) PostToBluesky(text string, images []*PostableImage, lang [
 		Type:      PostRecordType,
 		Text:      text,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		Embed:     embeds,
 		Langs:     lang,
+	}
+	if len(embeds) > 0 {
+		record.Embed = PostEmbed{
+			Type:   EmbedImagesType,
+			Images: embeds,
+		}
 	}
 	if len(facets) > 0 {
 		record.Facets = facets
