@@ -151,7 +151,7 @@ func (p *PostingFlow) sendCommandHandler(ctx context.Context, message *im.Messag
 			}
 			continue
 		}
-		err = messenger.SendMessage(ctx, message.Reply(fmt.Sprintf("Post sent to %s (%s) : %v", pname, postURL, err)))
+		err = messenger.SendMessage(ctx, message.Reply(fmt.Sprintf("Post sent to %s (%s)", pname, postURL)))
 		if err != nil {
 			log.Printf("messenger send message err: %v", err)
 		}
