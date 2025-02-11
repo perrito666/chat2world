@@ -60,14 +60,20 @@ type PostEmbed struct {
 	Images []EmbedImage `json:"images"`
 }
 
+type Reply struct {
+	Root   *CreateRecordResponse `json:"root,omitempty"`
+	Parent *CreateRecordResponse `json:"parent,omitempty"`
+}
+
 // PostRecord defines the inner record for a Bluesky post.
 type PostRecord struct {
 	Type      ATProtoType `json:"$type"`
 	Text      string      `json:"text"`
 	CreatedAt string      `json:"createdAt"`
-	Embed     PostEmbed   `json:"embed"`
+	Embed     *PostEmbed  `json:"embed,omitempty"`
 	Langs     []string    `json:"langs"` //tbd in a decent way
-	Facets    []Facet     `json:"facets"`
+	Facets    []Facet     `json:"facets,omitempty"`
+	Reply     *Reply      `json:"reply,omitempty"`
 }
 
 // CreateRecordRequest defines the full request for creating a record.

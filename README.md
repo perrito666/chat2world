@@ -19,6 +19,7 @@ So far we support telegram as it was trivial to make a bot for it, ideally I wou
 ### Microblogging Support
 
 * Mastodon support is there, you can post to mastodon from telegram Text and Images including Alt-text
+* Bluesky support is there, you can post to bluesky from telegram Text and Images including Alt-text, long posts will be split in 300 chars chunks without breaking words (if you try the clever longer than 300 chars word it will just beak)
 
 ## Future
 
@@ -28,7 +29,6 @@ I want signal, but I did not yet find clear docs on how to do this in go
 
 ### Microblogging Support
 
-* Next in line is bluesky, the whole motivation for this project is to be able to post to bluesky AND mastodon in one go
 * I consider Twitter, but I do not think the hassle is worth it, Twitter does not want to be used outside the official client, let it be.
 * Finally, I would like to be able to produce daily blogposts in hugo with all the day toots.
 
@@ -81,12 +81,25 @@ and issue the `/mastodon_auth` command (this is necessary only once, it will sto
 
 The whole auth process is interactive, it will ask you to open a URL in your browser, login and paste the code back in the chat.
 
+## Connecting Bluesky
+
+Start a chat with your bot (you could do this in public as it will use your userID not your chatID)
+and issue the `/bluesky_auth` command (this is necessary only once, it will store the identifier and app password in an encrypted file named `<userID>.bsky.json`).
+
+Bear in mind, this uses an **APP PASSWORD** not your main password, you can generate one in the settings of your bluesky account.
+
+
 ## Posting
 
-To begin a post you need to issue the `/new` command, this will set the bot ready for your inputs.
+To begin a post you need to issue the `/new [lang=es | es]` command, this will set the bot ready for your inputs.
 
 Any input that is not a known command while in post mode will be considered part of the post.
 
 You can also send images, if you add a caption to them, it will be used as alt-text in mastodon.
 
 Finally, you can either `/send` or `/cancel` the post.
+
+## Tooling
+
+There are flags provided for encryption and decryption of files.
+Find them with `./chat2world --help` (they also require the secret in the environment)

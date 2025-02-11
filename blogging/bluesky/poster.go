@@ -167,7 +167,13 @@ func (c *Client) Post(ctx context.Context, userID blogging.UserID, post *bloggin
 		}
 	}
 	var bskyURL string
-	bskyURL, err = c.client.PostToBluesky(post.Text, postImages, []string{"en"})
+	var langs []string
+	if len(post.Langs) != 0 {
+		langs = post.Langs
+	} else {
+		langs = []string{"en"}
+	}
+	bskyURL, err = c.client.PostToBluesky(post.Text, postImages, langs)
 	if err != nil {
 		return "", fmt.Errorf("posting to bluesky: %w", err)
 	}

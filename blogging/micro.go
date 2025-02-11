@@ -32,6 +32,7 @@ func NewBlogImage(data []byte, altText string) *BlogImage {
 type MicroblogPost struct {
 	Text   string       // Accumulated text content.
 	Images []*BlogImage // Telegram file IDs for images.
+	Langs  []string     // Languages of the post.
 }
 
 // AddImage adds an image to the post.

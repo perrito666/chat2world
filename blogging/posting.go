@@ -60,9 +60,38 @@ func (p *PostingFlow) HandleMessage(ctx context.Context, message *im.Message, me
 	return p.defaultHandler(ctx, message, messenger)
 }
 
+// argsIntoMaps receives the string slice obtained from AsCommand for the arguments and returns a map of the arguments
+// which are of the form key=value. It also returns a slice of the arguments that are not in the form key=value.
+func argsIntoMaps(args []string) (map[string]string, []string) {
+	argMap := make(map[string]string)
+	var remainingArgs []string
+	for _, arg := range args {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) == 2 {
+			argMap[parts[0]] = parts[1]
+		} else {
+			remainingArgs = append(remainingArgs, arg)
+		}
+	}
+	return argMap, remainingArgs
+}
+
 // newCommandHandler starts a new post (i.e. enters the writing state).
 func (p *PostingFlow) newCommandHandler(ctx context.Context, message *im.Message, messenger im.Messenger) error {
 	userID := message.UserID
+	_, args, err := message.AsCommand(p.StartCommandParser)
+	if err != nil {
+		return fmt.Errorf("parsing /new message (%s): %w", message.Text, err)
+	}
+
+	kv, positional := argsIntoMaps(args)
+
+	var langs []string
+	if lang, ok := kv["langs"]; ok {
+		langs = strings.Split(lang, ",")
+	} else if len(positional) > 0 {
+		langs = strings.Split(positional[0], ",")
+	}
 
 	p.postsMutex.Lock()
 	defer p.postsMutex.Unlock()
@@ -77,8 +106,10 @@ func (p *PostingFlow) newCommandHandler(ctx context.Context, message *im.Message
 		return nil
 	}
 
-	p.posts[userID] = &MicroblogPost{}
-	err := messenger.SendMessage(ctx, message.Reply("Started a new post. Now send text or images to add content. Use /send when ready or /cancel to discard."))
+	p.posts[userID] = &MicroblogPost{
+		Langs: langs,
+	}
+	err = messenger.SendMessage(ctx, message.Reply("Started a new post. Now send text or images to add content. Use /send when ready or /cancel to discard."))
 	if err != nil {
 		log.Printf("messenger send message err: %v", err)
 		return fmt.Errorf("messenger send message err: %w", err)

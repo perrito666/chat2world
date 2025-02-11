@@ -294,6 +294,32 @@ func atURIToHTTPSBsky(atURI string) string {
 
 }
 
+// splitTextIntoBSKyPalatableChunks splits the text into chunks that are less than 295 characters long.
+// This is because the Bluesky API has a limit of 300 characters for the text field.
+// for this we tokenize in words and then join them into chunks to ensure we do not break words, at the end
+// we join the chunks with a space and append the unicode ellipse when we have more than one chunk.
+func splitTextIntoBSKyPalatableChunks(text string) []string {
+	words := strings.Fields(text)
+	var chunks []string
+	var chunk strings.Builder
+	for _, word := range words {
+		if chunk.Len()+len(word) > 295 {
+			chunk.WriteRune('…')
+			chunks = append(chunks, chunk.String())
+			chunk.Reset()
+			chunk.WriteString(word)
+			continue
+		}
+		chunk.WriteRune(' ')
+		chunk.WriteString(word)
+	}
+	if chunk.Len() != 0 {
+		chunks = append(chunks, chunk.String())
+	}
+
+	return chunks
+}
+
 // PostToBluesky publishes a text post using the authenticated Client.
 // It sends a POST to the com.atproto.repo.createRecord endpoint with the post content.
 // For details on the expected JSON structure, see the Bluesky API reference https://docs.bsky.app/docs/tutorials/creating-a-post
@@ -324,64 +350,85 @@ func (client *Client) PostToBluesky(text string, images []*PostableImage, lang [
 		}
 		embeds = append(embeds, embed)
 	}
-	facets, err := ParseFacets(text, baseURL)
-	if err != nil {
-		log.Printf("failed to parse facets: %v", err)
-	}
-	record := PostRecord{
-		Type:      PostRecordType,
-		Text:      text,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		Langs:     lang,
-	}
-	if len(embeds) > 0 {
-		record.Embed = PostEmbed{
-			Type:   EmbedImagesType,
-			Images: embeds,
+	chunks := splitTextIntoBSKyPalatableChunks(text)
+	var root *CreateRecordResponse
+	var parent *CreateRecordResponse
+	var postResps []CreateRecordResponse
+	for i, chunk := range chunks {
+		facets, err := ParseFacets(chunk, baseURL)
+		if err != nil {
+			log.Printf("failed to parse facets: %v", err)
 		}
-	}
-	if len(facets) > 0 {
-		record.Facets = facets
-	}
-	recordReq := CreateRecordRequest{
-		// Use the handle (username) as the repo identifier.
-		Repo:       client.Handle,
-		Collection: "app.bsky.feed.post",
-		Record:     record,
-	}
-	jsonBody, err := json.Marshal(recordReq)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal post request: %w", err)
-	}
+		record := PostRecord{
+			Type:      PostRecordType,
+			Text:      chunk,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+			Langs:     lang,
+		}
+		// adding embeds only to the first chunk, it seems free but would distract from reading
+		if len(embeds) > 0 && i == 0 {
+			record.Embed = &PostEmbed{
+				Type:   EmbedImagesType,
+				Images: embeds,
+			}
+		}
+		if len(facets) > 0 {
+			record.Facets = facets
+		}
+		if parent != nil || root != nil {
+			record.Reply = &Reply{
+				Root:   root,
+				Parent: parent,
+			}
+		}
+		recordReq := CreateRecordRequest{
+			// Use the handle (username) as the repo identifier.
+			Repo:       client.Handle,
+			Collection: "app.bsky.feed.post",
+			Record:     record,
+		}
+		jsonBody, err := json.Marshal(recordReq)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal post request: %w", err)
+		}
 
-	url := baseURL + "/xrpc/com.atproto.repo.createRecord"
-	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return "", fmt.Errorf("failed to create new post request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+client.AccessJwt)
+		url := baseURL + "/xrpc/com.atproto.repo.createRecord"
+		req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
+		if err != nil {
+			return "", fmt.Errorf("failed to create new post request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+client.AccessJwt)
 
-	resp, err := client.HttpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute post request: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := client.HttpClient.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("failed to execute post request: %w", err)
+		}
+		defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read post response body: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		jsonBody, _ := json.MarshalIndent(recordReq, "", "  ")
-		log.Printf("sending post body: %s", string(jsonBody))
-		return "", fmt.Errorf("post request returned non-OK status: %s", string(body))
-	}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("failed to read post response body: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			jsonBody, _ := json.MarshalIndent(recordReq, "", "  ")
+			log.Printf("sending post body: %s", string(jsonBody))
+			return "", fmt.Errorf("post request returned non-OK status: %s", string(body))
+		}
 
-	var postResp CreateRecordResponse
-	err = json.Unmarshal(body, &postResp)
-	if err != nil {
-		return "", fmt.Errorf("failed to unmarshal post response: %w", err)
+		var postResp CreateRecordResponse
+		err = json.Unmarshal(body, &postResp)
+		if err != nil {
+			return "", fmt.Errorf("failed to unmarshal post response: %w", err)
+		}
+		if root == nil {
+			root = &postResp
+		}
+		if parent == nil {
+			parent = &postResp
+		}
+		postResps = append(postResps, postResp)
 	}
-	return atURIToHTTPSBsky(postResp.Uri), nil
+	// FIXME: Modify all to return several URLs
+	return atURIToHTTPSBsky(postResps[0].Uri), nil
 }

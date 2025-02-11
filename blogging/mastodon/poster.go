@@ -282,6 +282,9 @@ func (c *Client) Post(ctx context.Context, userID blogging.UserID, post *bloggin
 		MediaIDs: mediaIDs,
 		// Optionally, you could set additional fields such as Visibility here.
 	}
+	if len(post.Langs) > 0 {
+		toot.Language = post.Langs[0]
+	}
 
 	// Post the toot.
 	postedToot, err := c.client.PostStatus(ctx, toot)
